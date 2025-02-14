@@ -6,10 +6,12 @@ import {
   isBulkheadRejectedError,
   isHydratingCircuitError,
   isIsolatedCircuitError,
+  isSaturationCircuitError,
   isTaskCancelledError,
 } from './Errors';
 import { HydratingCircuitError } from './HydratingCircuitError';
 import { IsolatedCircuitError } from './IsolatedCircuitError';
+import { SaturationCircuitError } from './SaturationCircuitError';
 import { TaskCancelledError } from './TaskCancelledError';
 
 describe('Errors', () => {
@@ -35,6 +37,10 @@ describe('Errors', () => {
     it('returns false for an instance of HydratingCircuitError', () => {
       expect(isBrokenCircuitError(new HydratingCircuitError())).to.be.false;
     });
+
+    it('returns false for an instance of SaturationCircuitError', () => {
+      expect(isBrokenCircuitError(new SaturationCircuitError())).to.be.false;
+    });
   });
 
   describe('BulkheadRejectedError', () => {
@@ -58,6 +64,10 @@ describe('Errors', () => {
 
     it('returns false for an instance of HydratingCircuitError', () => {
       expect(isBulkheadRejectedError(new HydratingCircuitError())).to.be.false;
+    });
+
+    it('returns false for an instance of SaturationCircuitError', () => {
+      expect(isBulkheadRejectedError(new SaturationCircuitError())).to.be.false;
     });
   });
 
@@ -83,6 +93,10 @@ describe('Errors', () => {
     it('returns false for an instance of HydratingCircuitError', () => {
       expect(isIsolatedCircuitError(new HydratingCircuitError())).to.be.false;
     });
+
+    it('returns false for an instance of SaturationCircuitError', () => {
+      expect(isIsolatedCircuitError(new SaturationCircuitError())).to.be.false;
+    });
   });
 
   describe('TaskCancelledError', () => {
@@ -107,6 +121,10 @@ describe('Errors', () => {
     it('returns false for an instance of HydratingCircuitError', () => {
       expect(isTaskCancelledError(new HydratingCircuitError())).to.be.false;
     });
+
+    it('returns false for an instance of SaturationCircuitError', () => {
+      expect(isTaskCancelledError(new SaturationCircuitError())).to.be.false;
+    });
   });
 
   describe('HydratingCircuitError', () => {
@@ -130,6 +148,38 @@ describe('Errors', () => {
 
     it('returns false for an instance of TaskCancelledError', () => {
       expect(isHydratingCircuitError(new TaskCancelledError())).to.be.false;
+    });
+
+    it('returns false for an instance of SaturationCircuitError', () => {
+      expect(isHydratingCircuitError(new SaturationCircuitError())).to.be.false;
+    });
+  });
+
+  describe('SaturationCircuitError', () => {
+    const error = new SaturationCircuitError();
+
+    it('returns true for an instance of SaturationCircuitError', () => {
+      expect(isSaturationCircuitError(error)).to.be.true;
+    });
+
+    it('returns false for an instance of BrokenCircuitError', () => {
+      expect(isSaturationCircuitError(new BrokenCircuitError())).to.be.false;
+    });
+
+    it('returns false for an instance of BulkheadRejectedError', () => {
+      expect(isSaturationCircuitError(new BulkheadRejectedError(0, 0))).to.be.false;
+    });
+
+    it('returns false for an instance of IsolatedCircuitError', () => {
+      expect(isSaturationCircuitError(new IsolatedCircuitError())).to.be.false;
+    });
+
+    it('returns false for an instance of TaskCancelledError', () => {
+      expect(isSaturationCircuitError(new TaskCancelledError())).to.be.false;
+    });
+
+    it('returns false for an instance of HydratingCircuitError', () => {
+      expect(isSaturationCircuitError(new HydratingCircuitError())).to.be.false;
     });
   });
 });

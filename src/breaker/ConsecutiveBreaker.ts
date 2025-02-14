@@ -25,4 +25,6 @@ export class ConsecutiveBreaker implements IBreaker {
   public failure() {
     return ++this.state >= this.threshold;
   }
+
+  public reset() {};
 }

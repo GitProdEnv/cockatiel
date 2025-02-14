@@ -1,9 +1,10 @@
 import { ConstantBackoff, IBackoff, IBackoffFactory } from './backoff/Backoff';
-import { IBreaker } from './breaker/Breaker';
+import { IBreaker, IHalfOpenBreaker } from './breaker/Breaker';
+import { HalfopenConstantBreaker } from './breaker/HalfopenConstantBreaker';
 import { neverAbortedSignal } from './common/abort';
 import { EventEmitter } from './common/Event';
 import { ExecuteWrapper, returnOrThrow } from './common/Executor';
-import { BrokenCircuitError, HydratingCircuitError, TaskCancelledError } from './errors/Errors';
+import { BrokenCircuitError, HydratingCircuitError, isBrokenCircuitError, isSaturationCircuitError, SaturationCircuitError } from './errors/Errors';
 import { IsolatedCircuitError } from './errors/IsolatedCircuitError';
 import { FailureReason, IDefaultPolicyContext, IPolicy } from './Policy';
 
@@ -62,6 +63,8 @@ export interface ICircuitBreakerOptions {
    * Initial state from a previous call to {@link CircuitBreakerPolicy.toJSON}.
    */
   initialState?: unknown;
+
+  halfOpenBreaker?: IHalfOpenBreaker;
 }
 
 type InnerState =
@@ -75,9 +78,9 @@ type InnerState =
     }
   | {
       value: CircuitState.HalfOpen;
-      test: Promise<any>;
       attemptNo: number;
       backoff: IBackoff<IHalfOpenAfterBackoffContext>;
+      probeNo: number;
     };
 
 interface ISerializedState {
@@ -88,6 +91,7 @@ interface ISerializedState {
 export class CircuitBreakerPolicy implements IPolicy {
   declare readonly _altReturn: never;
 
+  public halfOpenBreaker: IHalfOpenBreaker;
   private readonly breakEmitter = new EventEmitter<FailureReason<unknown> | { isolated: true }>();
   private readonly resetEmitter = new EventEmitter<void>();
   private readonly halfOpenEmitter = new EventEmitter<void>();
@@ -150,6 +154,8 @@ export class CircuitBreakerPolicy implements IPolicy {
         ? new ConstantBackoff(options.halfOpenAfter)
         : options.halfOpenAfter;
 
+    this.halfOpenBreaker = this.options.halfOpenBreaker || new HalfopenConstantBreaker();
+
     if (options.initialState) {
       const initialState = options.initialState as ISerializedState;
       this.innerState = initialState.ownState as InnerState;
@@ -175,8 +181,19 @@ export class CircuitBreakerPolicy implements IPolicy {
         this.innerState.backoff = backoff;
       }
     }
-  }
 
+    this.halfOpenBreaker.onSuccess(() => {
+      this.close();
+    });
+
+    this.halfOpenBreaker.onFailure(({ lastFailure, signal }) => {
+      if (this.innerState.value !== CircuitState.HalfOpen) return;
+      this.innerLastFailure = lastFailure;
+      this.options.breaker.failure(CircuitState.HalfOpen);
+      this.open(lastFailure, signal);
+    });
+  }
+  
   /**
    * Manually holds open the circuit breaker.
    * @returns A handle that keeps the breaker open until `.dispose()` is called.
@@ -235,26 +252,24 @@ export class CircuitBreakerPolicy implements IPolicy {
         return returnOrThrow(result);
 
       case CircuitState.HalfOpen:
-        await state.test.catch(() => undefined);
-        if (this.state === CircuitState.Closed && signal.aborted) {
-          throw new TaskCancelledError();
-        }
-
-        return this.execute(fn);
+        return this.halfOpen(fn, signal);
 
       case CircuitState.Open:
         if (Date.now() - state.openedAt < state.backoff.duration) {
           throw new BrokenCircuitError();
         }
-        const test = this.halfOpen(fn, signal);
+        this.halfOpenEmitter.emit();
+        this.halfOpenBreaker.reset();
+
         this.innerState = {
           value: CircuitState.HalfOpen,
-          test,
           backoff: state.backoff,
           attemptNo: state.attemptNo + 1,
+          probeNo: 0
         };
+        
         this.stateChangeEmitter.emit(CircuitState.HalfOpen);
-        return test;
+        return this.execute(fn, signal);
 
       case CircuitState.Isolated:
         throw new IsolatedCircuitError();
@@ -296,21 +311,46 @@ export class CircuitBreakerPolicy implements IPolicy {
     fn: (context: IDefaultPolicyContext) => PromiseLike<T> | T,
     signal: AbortSignal,
   ): Promise<T> {
-    this.halfOpenEmitter.emit();
+    const executFn = (signal: AbortSignal) => this.executor.invoke(fn, { signal });
+
+    // halfopen breaker accepts a limit amount of functions until it refuses to serve requests.
+    const fnPromise = this.halfOpenBreaker.accept(executFn, signal);
+
+    if (fnPromise === null) {
+      throw new SaturationCircuitError();
+    }
+
+    (this.innerState as {
+      value: CircuitState.HalfOpen;
+      attemptNo: number;
+      backoff: IBackoff<IHalfOpenAfterBackoffContext>;
+      probeNo: number;
+    }).probeNo++
 
     try {
-      const result = await this.executor.invoke(fn, { signal });
+      const result = await fnPromise;
+
       if ('success' in result) {
         this.options.breaker.success(CircuitState.HalfOpen);
-        this.close();
       } else {
         this.innerLastFailure = result;
-        this.options.breaker.failure(CircuitState.HalfOpen);
         this.open(result, signal);
+        this.options.breaker.failure(CircuitState.HalfOpen);
+      }
+
+      if ('error' in result) {
+        throw { handledError: result.error };
       }
 
       return returnOrThrow(result);
-    } catch (err) {
+    } catch (err: unknown) {
+      if (typeof err === 'object' && err !== null && 'handledError' in err) {
+        throw err.handledError;
+      }
+
+      if (isSaturationCircuitError(err) || isBrokenCircuitError(err)) {
+        throw err;
+      }
       // It's an error, but not one the circuit is meant to retry, so
       // for our purposes it's a success. Task failed successfully!
       this.close();
@@ -334,6 +374,7 @@ export class CircuitBreakerPolicy implements IPolicy {
     this.innerState = { value: CircuitState.Open, openedAt: Date.now(), backoff, attemptNo };
     this.breakEmitter.emit(reason);
     this.stateChangeEmitter.emit(CircuitState.Open);
+    //this.halfOpenBreaker.reset();
   }
 
   private close() {
@@ -341,6 +382,8 @@ export class CircuitBreakerPolicy implements IPolicy {
       this.innerState = { value: CircuitState.Closed };
       this.resetEmitter.emit();
       this.stateChangeEmitter.emit(CircuitState.Closed);
+      //this.halfOpenBreaker.reset();
+      this.options.breaker.reset();
     }
   }
 }

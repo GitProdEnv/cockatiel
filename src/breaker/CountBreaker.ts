@@ -91,11 +91,7 @@ export class CountBreaker implements IBreaker {
   /**
    * @inheritdoc
    */
-  public success(state: CircuitState) {
-    if (state === CircuitState.HalfOpen) {
-      this.reset();
-    }
-
+  public success(_state: CircuitState) {
     this.sample(true);
   }
 
@@ -122,7 +118,7 @@ export class CountBreaker implements IBreaker {
     return false;
   }
 
-  private reset() {
+  public reset() {
     this.samples.fill(null);
     this.successes = 0;
     this.failures = 0;

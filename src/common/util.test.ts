@@ -25,3 +25,12 @@ export async function runInChild(code: string) {
 
   return Buffer.concat(output).toString().replace(/\r?\n/g, '\n').trim();
 }
+
+/**
+ * Runs the callback function sequentially given the amount of x times.
+ */
+export async function timesSeq(x: number, callback: () => Promise<void>): Promise<void> {
+  for (let i = 0; i < x; i++) {
+    await callback();
+  }
+}

@@ -2,12 +2,14 @@ import { BrokenCircuitError } from './BrokenCircuitError';
 import { BulkheadRejectedError } from './BulkheadRejectedError';
 import { HydratingCircuitError } from './HydratingCircuitError';
 import { IsolatedCircuitError } from './IsolatedCircuitError';
+import { SaturationCircuitError } from './SaturationCircuitError';
 import { TaskCancelledError } from './TaskCancelledError';
 
 export * from './BrokenCircuitError';
 export * from './BulkheadRejectedError';
 export * from './HydratingCircuitError';
 export * from './IsolatedCircuitError';
+export * from './SaturationCircuitError';
 export * from './TaskCancelledError';
 
 export const isBrokenCircuitError = (e: unknown): e is BrokenCircuitError =>
@@ -24,3 +26,6 @@ export const isTaskCancelledError = (e: unknown): e is TaskCancelledError =>
 
 export const isHydratingCircuitError = (e: unknown): e is HydratingCircuitError =>
   !!e && e instanceof Error && 'isHydratingCircuitError' in e;
+
+export const isSaturationCircuitError = (e: unknown): e is SaturationCircuitError =>
+  !!e && e instanceof Error && 'isSaturationCircuitError' in e;

@@ -1,18 +1,20 @@
 import { expect } from 'chai';
 import { SinonFakeTimers, SinonStub, stub, useFakeTimers } from 'sinon';
 import { promisify } from 'util';
-import { IBackoffFactory } from './backoff/Backoff';
-import { IterableBackoff } from './backoff/IterableBackoff';
-import { ConsecutiveBreaker } from './breaker/Breaker';
 import {
   CircuitBreakerPolicy,
   CircuitState,
   IHalfOpenAfterBackoffContext,
 } from './CircuitBreakerPolicy';
+import { circuitBreaker, handleAll, handleType } from './Policy';
+import { IBackoffFactory } from './backoff/Backoff';
+import { IterableBackoff } from './backoff/IterableBackoff';
+import { ConsecutiveBreaker } from './breaker/Breaker';
+import { HalfopenConstantBreaker } from './breaker/HalfopenConstantBreaker';
 import { abortedSignal } from './common/abort';
+import { timesSeq } from './common/util.test';
 import { BrokenCircuitError, TaskCancelledError } from './errors/Errors';
 import { IsolatedCircuitError } from './errors/IsolatedCircuitError';
-import { circuitBreaker, handleAll, handleType } from './Policy';
 
 class MyException extends Error {}
 
@@ -77,18 +79,28 @@ describe('CircuitBreakerPolicy', () => {
 
     clock.tick(1000);
 
-    const result = p.execute(stub().resolves(42));
-    expect(p.state).to.equal(CircuitState.HalfOpen);
+    await timesSeq(1, async () => {
+      const result = p.execute(stub().resolves(42));
+      expect(p.state).to.equal(CircuitState.HalfOpen);
+      expect(await result).to.equal(42);
+    });
+
     expect(onHalfOpen).calledOnce;
-    expect(await result).to.equal(42);
+
     expect(p.state).to.equal(CircuitState.Closed);
     expect(onReset).calledOnce;
   });
 
+  //it.todo('closes after all settled');
+  //it.todo('throws if too many incoming');
+  // it.todo('switches from open to halfopen state')
+
   it('uses the given backof factory to decide whether to enter the half open state', async () => {
+    const halfopenBreaker = new HalfopenConstantBreaker(3);
     p = circuitBreaker(handleType(MyException), {
       halfOpenAfter: new IterableBackoff([1000, 2000]),
       breaker: new ConsecutiveBreaker(2),
+      halfOpenBreaker: halfopenBreaker
     });
     p.onReset(onReset);
     p.onHalfOpen(onHalfOpen);
@@ -110,11 +122,15 @@ describe('CircuitBreakerPolicy', () => {
     );
 
     clock.tick(1000);
-
-    const result = p.execute(stub().resolves(42));
+    // here state is open
+    const result1 = p.execute(stub().resolves(42));
+    // here state is halfopen
+    const result2 = p.execute(stub().resolves(42));
+    const result3 = p.execute(stub().resolves(42));
     expect(p.state).to.equal(CircuitState.HalfOpen);
     expect(onHalfOpen).calledTwice;
-    expect(await result).to.equal(42);
+    expect(await result1).to.equal(42);
+    await Promise.all([result1, result2, result3]);
     expect(p.state).to.equal(CircuitState.Closed);
     expect(onReset).calledOnce;
   });
@@ -131,7 +147,7 @@ describe('CircuitBreakerPolicy', () => {
           return new MyBreaker(this.duration + 1);
         }
       })(0),
-      breaker: new ConsecutiveBreaker(2),
+      breaker: new ConsecutiveBreaker(2)
     });
     p.onReset(onReset);
     p.onHalfOpen(onHalfOpen);
@@ -149,7 +165,6 @@ describe('CircuitBreakerPolicy', () => {
     expect(args).to.be.empty;
 
     await openBreaker();
-
     expect(args).to.deep.equal([{ duration: 1, attempt: 1 }]);
     clock.tick(args.pop()!.duration);
 

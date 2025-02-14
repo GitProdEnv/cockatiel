@@ -134,6 +134,10 @@ export class SamplingBreaker implements IBreaker {
     return false;
   }
 
+  public reset() {
+    this.resetWindows();
+  }
+
   private resetWindows() {
     this.currentFailures = 0;
     this.currentSuccesses = 0;
